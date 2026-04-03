@@ -1,0 +1,4 @@
+{
+  "name": "code-review",
+  "description": "Use this skill when asked to review, audit, critique, or improve code. Triggers on: 'review this code', 'what's wrong with this', 'audit my function', 'can you improve this', 'find bugs in', 'is this good code'."
+}

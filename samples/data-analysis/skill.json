@@ -1,0 +1,4 @@
+{
+  "name": "data-analysis",
+  "description": "Use this skill when asked to analyse data, explore a CSV or dataset, find patterns, produce statistics, or generate charts. Triggers on: 'analyse this data', 'what does this CSV show', 'find trends in', 'summarise these numbers', 'plot this', 'give me stats on'."
+}

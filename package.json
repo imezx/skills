@@ -1,0 +1,21 @@
+{
+  "name": "lms-plugin-skills",
+  "version": "1.0.0",
+  "description": "Claude-style skill system for LM Studio. Discovers skill directories, injects an available-skills list into every prompt, and provides tools to read skill files - mirroring exactly how Claude's own skill system works.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && lms dev",
+    "push": "lms push"
+  },
+  "author": "user",
+  "license": "MIT",
+  "dependencies": {
+    "@lmstudio/sdk": "^1.5.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.8",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "name": "git-commit",
+  "description": "Use this skill when asked to write a git commit message, PR description, changelog entry, or release notes. Triggers on: 'write a commit message', 'commit message for this', 'write a PR description', 'changelog entry', 'release notes'."
+}
