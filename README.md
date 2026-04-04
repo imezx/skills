@@ -64,7 +64,7 @@ If absent, the plugin uses the directory name and extracts the description from 
 | Setting | Default | Description |
 |---|---|---|
 | Auto-Inject Skills List | On | Injects skills block into every prompt |
-| Max Skills in Context | 10 | Max skills listed in each injected block |
+| Max Skills in Context | 15 | Max skills listed in each injected block |
 | Skills Directory Path | *(empty)* | Custom path to skills directory |
 
 ### Skills Directory Path

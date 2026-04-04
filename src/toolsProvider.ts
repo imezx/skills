@@ -2,14 +2,16 @@ import * as path from "path";
 import { tool } from "@lmstudio/sdk";
 import { z } from "zod";
 import { resolveEffectiveConfig } from "./settings";
-import { execCommand, resolveShell, detectPlatform } from "./executor";
+import { execCommand, resolveShell } from "./executor";
 import {
   EXEC_DEFAULT_TIMEOUT_MS,
   EXEC_MAX_TIMEOUT_MS,
   EXEC_MAX_COMMAND_LENGTH,
+  LIST_SKILLS_DEFAULT_LIMIT,
 } from "./constants";
 import {
   scanSkills,
+  searchSkills,
   resolveSkillByName,
   readSkillFile,
   readAbsolutePath,
@@ -45,33 +47,100 @@ export async function toolsProvider(ctl: PluginController) {
   const listSkillsTool = tool({
     name: "list_skills",
     description:
-      "List all available skills in the skills directory. " +
-      "Each skill is a directory with a SKILL.md entry point containing instructions and best practices. " +
-      "Call this first when you are unsure which skills are available. " +
-      "After listing, call read_skill_file to read the SKILL.md of any skill relevant to your current task.",
-    parameters: {},
-    implementation: async (_, { status }) => {
-      status("Scanning skills directory…");
+      "List or search available skills. " +
+      "Without a query, returns all skills up to the limit. " +
+      "With a query, scores and ranks skills by relevance across name, tags, description, and SKILL.md body content - use this to find skills relevant to a task without needing all skills in context. " +
+      "Always call read_skill_file on any skill that looks relevant before starting work.",
+    parameters: {
+      query: z
+        .string()
+        .optional()
+        .describe(
+          "Optional search query to filter and rank skills by relevance. " +
+            "Matches against skill names, tags, descriptions, and SKILL.md body using IDF-weighted token scoring, phrase proximity, and partial prefix matching. " +
+            "Omit to list all skills.",
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe(
+          `Maximum number of skills to return. Defaults to ${LIST_SKILLS_DEFAULT_LIMIT}. Omit the query and set a high limit to page through all installed skills.`,
+        ),
+    },
+    implementation: async ({ query, limit }, { status }) => {
       const cfg = resolveEffectiveConfig(ctl);
-      const skills = scanSkills(cfg.skillsPath);
+      const cap = limit ?? LIST_SKILLS_DEFAULT_LIMIT;
 
-      if (skills.length === 0) {
+      if (query && query.trim()) {
+        status(`Searching skills for "${query.trim()}"..`);
+        const results = searchSkills(cfg.skillsPaths, query.trim());
+
+        if (results.length === 0) {
+          return {
+            query: query.trim(),
+            found: 0,
+            skills: [],
+            note: "No skills matched. Try a broader query or omit the query to list all skills.",
+          };
+        }
+
+        const page = results.slice(0, cap);
+        status(
+          `Found ${results.length} match${results.length !== 1 ? "es" : ""}`,
+        );
+
         return {
-          found: 0,
-          skillsPath: cfg.skillsPath,
-          skills: [],
-          note: "No skills found. Create skill directories with a SKILL.md file inside the skills path.",
+          query: query.trim(),
+          total: results.length,
+          found: page.length,
+          ...(results.length > cap
+            ? {
+                note: `Showing top ${cap} of ${results.length} matches. Refine your query or increase the limit to see more.`,
+              }
+            : {}),
+          skills: page.map(({ skill, score }) => ({
+            name: skill.name,
+            description: skill.description,
+            tags: skill.tags.length > 0 ? skill.tags : undefined,
+            skillMdPath: skill.skillMdPath,
+            hasExtraFiles: skill.hasExtraFiles,
+            score: Math.round(score * 100) / 100,
+          })),
         };
       }
 
+      status("Scanning skills directory..");
+      const skills = scanSkills(cfg.skillsPaths);
+
+      if (skills.length === 0) {
+        return {
+          total: 0,
+          found: 0,
+          skillsPaths: cfg.skillsPaths,
+          skills: [],
+          note: "No skills found. Create skill directories with a SKILL.md file inside the configured skills paths.",
+        };
+      }
+
+      const page = skills.slice(0, cap);
       status(`Found ${skills.length} skill${skills.length !== 1 ? "s" : ""}`);
 
       return {
-        found: skills.length,
-        skillsPath: cfg.skillsPath,
-        skills: skills.map((s) => ({
+        total: skills.length,
+        found: page.length,
+        skillsPaths: cfg.skillsPaths,
+        ...(skills.length > cap
+          ? {
+              note: `Showing ${cap} of ${skills.length} skills. Increase the limit or use a query to find specific skills.`,
+            }
+          : {}),
+        skills: page.map((s) => ({
           name: s.name,
           description: s.description,
+          tags: s.tags.length > 0 ? s.tags : undefined,
           skillMdPath: s.skillMdPath,
           hasExtraFiles: s.hasExtraFiles,
         })),
@@ -103,17 +172,18 @@ export async function toolsProvider(ctl: PluginController) {
         ),
     },
     implementation: async ({ skill_name, file_path }, { status }) => {
-      status(`Reading ${skill_name}${file_path ? ` / ${file_path}` : ""}…`);
+      status(`Reading ${skill_name}${file_path ? ` / ${file_path}` : ""}..`);
 
       if (path.isAbsolute(skill_name)) {
         const cfg = resolveEffectiveConfig(ctl);
-        const resolvedSkillsPath = path.resolve(cfg.skillsPath);
-        if (
-          !path.resolve(skill_name).startsWith(resolvedSkillsPath + path.sep)
-        ) {
+        const resolvedTarget = path.resolve(skill_name);
+        const isAllowed = cfg.skillsPaths.some((p) =>
+          resolvedTarget.startsWith(path.resolve(p) + path.sep),
+        );
+        if (!isAllowed) {
           return {
             success: false,
-            error: "Path is outside the skills directory.",
+            error: "Path is outside the configured skills directories.",
           };
         }
         const result = readAbsolutePath(skill_name);
@@ -127,7 +197,7 @@ export async function toolsProvider(ctl: PluginController) {
       }
 
       const cfg = resolveEffectiveConfig(ctl);
-      const skill = resolveSkillByName(cfg.skillsPath, skill_name);
+      const skill = resolveSkillByName(cfg.skillsPaths, skill_name);
 
       if (!skill) {
         return {
@@ -182,17 +252,18 @@ export async function toolsProvider(ctl: PluginController) {
         ),
     },
     implementation: async ({ skill_name, sub_path }, { status }) => {
-      status(`Listing files in ${skill_name}…`);
+      status(`Listing files in ${skill_name}..`);
 
       if (path.isAbsolute(skill_name)) {
         const cfg = resolveEffectiveConfig(ctl);
-        const resolvedSkillsPath = path.resolve(cfg.skillsPath);
-        if (
-          !path.resolve(skill_name).startsWith(resolvedSkillsPath + path.sep)
-        ) {
+        const resolvedTarget = path.resolve(skill_name);
+        const isAllowed = cfg.skillsPaths.some((p) =>
+          resolvedTarget.startsWith(path.resolve(p) + path.sep),
+        );
+        if (!isAllowed) {
           return {
             success: false,
-            error: "Path is outside the skills directory.",
+            error: "Path is outside the configured skills directories.",
           };
         }
         const entries = listAbsoluteDirectory(skill_name);
@@ -213,7 +284,7 @@ export async function toolsProvider(ctl: PluginController) {
       }
 
       const cfg = resolveEffectiveConfig(ctl);
-      const skill = resolveSkillByName(cfg.skillsPath, skill_name);
+      const skill = resolveSkillByName(cfg.skillsPaths, skill_name);
 
       if (!skill) {
         return {
@@ -273,14 +344,26 @@ export async function toolsProvider(ctl: PluginController) {
         .describe(
           `Timeout in milliseconds. Defaults to ${EXEC_DEFAULT_TIMEOUT_MS}ms. Maximum ${EXEC_MAX_TIMEOUT_MS}ms. Increase for long-running scripts.`,
         ),
+      env: z
+        .record(z.string())
+        .optional()
+        .describe(
+          "Optional environment variables to set for this command, merged on top of the existing environment. Use for API keys, virtualenv paths, or any per-command configuration you do not want baked into the command string.",
+        ),
     },
-    implementation: async ({ command, cwd, timeout_ms }, { status }) => {
-      const shell = resolveShell();
+    implementation: async ({ command, cwd, timeout_ms, env }, { status }) => {
+      const cfg = resolveEffectiveConfig(ctl);
+      const shell = resolveShell(cfg.shellPath || undefined);
       status(
         `Running on ${shell.platform}: ${command.slice(0, 60)}${command.length > 60 ? "\u2026" : ""}`,
       );
 
-      const result = await execCommand(command, { cwd, timeoutMs: timeout_ms });
+      const result = await execCommand(command, {
+        cwd,
+        timeoutMs: timeout_ms,
+        shellPath: cfg.shellPath || undefined,
+        env,
+      });
 
       if (result.timedOut) {
         status("Timed out");

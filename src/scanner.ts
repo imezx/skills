@@ -5,6 +5,7 @@ import {
   SKILL_MANIFEST_FILE,
   MAX_FILE_SIZE_BYTES,
   MAX_DESCRIPTION_CHARS,
+  BODY_EXCERPT_CHARS,
   MAX_DIRECTORY_DEPTH,
   MAX_DIRECTORY_ENTRIES,
 } from "./constants";
@@ -71,6 +72,63 @@ function extractDescription(content: string): string {
   );
 }
 
+function extractBodyExcerpt(content: string): string {
+  const lines = content.split("\n");
+  const collected: string[] = [];
+  let passedH1 = false;
+  let passedDescription = false;
+  let inCodeFence = false;
+  let descriptionDone = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+
+    if (!passedH1) {
+      if (trimmed.startsWith("# ")) passedH1 = true;
+      continue;
+    }
+
+    if (!descriptionDone) {
+      if (!passedDescription) {
+        if (trimmed && !trimmed.startsWith("#")) {
+          passedDescription = true;
+          continue;
+        }
+        continue;
+      }
+      if (!trimmed) {
+        descriptionDone = true;
+        continue;
+      }
+      continue;
+    }
+
+    if (!trimmed) continue;
+
+    const stripped = trimmed
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/\*(.+?)\*/g, "$1")
+      .replace(/`(.+?)`/g, "$1")
+      .replace(/^\s*[-*+]\s+/, "")
+      .replace(/^\s*\d+\.\s+/, "")
+      .replace(/\[(.+?)\]\(.+?\)/g, "$1");
+
+    if (!stripped) continue;
+
+    collected.push(stripped);
+    if (collected.join(" ").length >= BODY_EXCERPT_CHARS) break;
+  }
+
+  return collected.join(" ").trim().slice(0, BODY_EXCERPT_CHARS);
+}
+
 function loadManifest(skillDir: string): SkillManifestFile | null {
   const manifestPath = path.join(skillDir, SKILL_MANIFEST_FILE);
   try {
@@ -93,7 +151,7 @@ function hasExtraFiles(skillDir: string): boolean {
   }
 }
 
-export function scanSkills(skillsDir: string): SkillInfo[] {
+function scanSkillsDir(skillsDir: string): SkillInfo[] {
   try {
     if (!fs.existsSync(skillsDir)) return [];
 
@@ -109,34 +167,198 @@ export function scanSkills(skillsDir: string): SkillInfo[] {
 
       const manifest = loadManifest(skillDir);
       const skillMdContent = readFileSafe(skillMdPath);
+
       const description =
         manifest?.description ??
         (skillMdContent
           ? extractDescription(skillMdContent)
           : "No description available.");
 
+      const bodyExcerpt = skillMdContent
+        ? extractBodyExcerpt(skillMdContent)
+        : "";
+
+      const tags = Array.isArray(manifest?.tags)
+        ? manifest.tags.filter((t): t is string => typeof t === "string")
+        : [];
+
       skills.push({
         name: manifest?.name ?? entry.name,
         description,
+        bodyExcerpt,
+        tags,
         skillMdPath,
         directoryPath: skillDir,
         hasExtraFiles: hasExtraFiles(skillDir),
       });
     }
 
-    return skills.sort((a, b) => a.name.localeCompare(b.name));
+    return skills;
   } catch {
     return [];
   }
 }
 
+export function scanSkills(skillsDirs: string[]): SkillInfo[] {
+  const seen = new Set<string>();
+  const merged: SkillInfo[] = [];
+
+  for (const dir of skillsDirs) {
+    for (const skill of scanSkillsDir(dir)) {
+      if (!seen.has(skill.directoryPath)) {
+        seen.add(skill.directoryPath);
+        merged.push(skill);
+      }
+    }
+  }
+
+  return merged.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export interface SkillSearchResult {
+  skill: SkillInfo;
+  score: number;
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[\s\-_/\\.,;:()\[\]{}|]+/)
+    .filter((t) => t.length > 0);
+}
+
+function computeIdf(skills: SkillInfo[]): Map<string, number> {
+  const docFreq = new Map<string, number>();
+  const N = skills.length;
+
+  for (const skill of skills) {
+    const allTokens = new Set([
+      ...tokenize(skill.name),
+      ...tokenize(skill.description),
+      ...tokenize(skill.bodyExcerpt),
+      ...skill.tags.flatMap((t) => tokenize(t)),
+    ]);
+    for (const token of allTokens) {
+      docFreq.set(token, (docFreq.get(token) ?? 0) + 1);
+    }
+  }
+
+  const idf = new Map<string, number>();
+  for (const [token, df] of docFreq) {
+    idf.set(token, Math.log((N + 1) / (df + 1)) + 1);
+  }
+
+  return idf;
+}
+
+function scoreToken(token: string, candidate: string): number {
+  if (candidate === token) return 1.0;
+  if (candidate.startsWith(token) && token.length >= 3) return 0.6;
+  if (candidate.includes(token) && token.length >= 4) return 0.3;
+  return 0;
+}
+
+function scoreField(
+  queryTokens: string[],
+  fieldTokens: string[],
+  idf: Map<string, number>,
+): number {
+  if (queryTokens.length === 0 || fieldTokens.length === 0) return 0;
+
+  let weightedTotal = 0;
+  let weightSum = 0;
+
+  for (const qt of queryTokens) {
+    const weight = idf.get(qt) ?? 1.0;
+    let best = 0;
+    for (const ft of fieldTokens) {
+      best = Math.max(best, scoreToken(qt, ft));
+    }
+    weightedTotal += best * weight;
+    weightSum += weight;
+  }
+
+  if (weightSum === 0) return 0;
+
+  const coverage = weightedTotal / weightSum;
+  const density = Math.min(weightedTotal / fieldTokens.length, 1.0);
+  return coverage * 0.7 + density * 0.3;
+}
+
+export function searchSkills(
+  skillsDirs: string[],
+  query: string,
+): SkillSearchResult[] {
+  const queryTokens = tokenize(query);
+  if (queryTokens.length === 0) return [];
+
+  const queryLower = query.toLowerCase().trim();
+  const allSkills = scanSkills(skillsDirs);
+  const idf = computeIdf(allSkills);
+  const results: SkillSearchResult[] = [];
+
+  for (const skill of allSkills) {
+    const nameLower = skill.name.toLowerCase();
+
+    if (nameLower === queryLower) {
+      results.push({ skill, score: 10.0 });
+      continue;
+    }
+
+    const nameTokens = tokenize(skill.name);
+    const descTokens = tokenize(skill.description);
+    const bodyTokens = tokenize(skill.bodyExcerpt);
+
+    const nameScore = scoreField(queryTokens, nameTokens, idf);
+    const descScore = scoreField(queryTokens, descTokens, idf);
+    const bodyScore = scoreField(queryTokens, bodyTokens, idf);
+
+    const phraseNameBonus = nameLower.includes(queryLower) ? 0.4 : 0;
+    const phraseDescBonus = skill.description.toLowerCase().includes(queryLower)
+      ? 0.2
+      : 0;
+
+    let tagScore = 0;
+    for (const tag of skill.tags) {
+      const tagLower = tag.toLowerCase();
+      if (tagLower === queryLower) {
+        tagScore = Math.max(tagScore, 1.0);
+      } else if (
+        tagLower.includes(queryLower) ||
+        queryLower.includes(tagLower)
+      ) {
+        tagScore = Math.max(tagScore, 0.6);
+      } else {
+        tagScore = Math.max(
+          tagScore,
+          scoreField(queryTokens, tokenize(tag), idf),
+        );
+      }
+    }
+
+    const score =
+      nameScore * 3.0 +
+      tagScore * 2.5 +
+      descScore * 1.5 +
+      bodyScore * 0.8 +
+      phraseNameBonus +
+      phraseDescBonus;
+
+    if (score > 0.15) {
+      results.push({ skill, score });
+    }
+  }
+
+  return results.sort((a, b) => b.score - a.score);
+}
+
 export function resolveSkillByName(
-  skillsDir: string,
+  skillsDirs: string[],
   skillName: string,
 ): SkillInfo | null {
   const lower = skillName.toLowerCase().trim();
   return (
-    scanSkills(skillsDir).find(
+    scanSkills(skillsDirs).find(
       (s) =>
         s.name.toLowerCase() === lower ||
         path.basename(s.directoryPath).toLowerCase() === lower,
@@ -156,12 +378,12 @@ export function readSkillFile(
   }
   if (!fs.existsSync(resolved)) {
     return {
-      error: `File not found: ${targetRel}. Use list_skill_files to see available files.`,
+      error: `File not found: ${targetRel}. Use \`list_skill_files\` to see available files.`,
     };
   }
   if (fs.statSync(resolved).isDirectory()) {
     return {
-      error: `"${targetRel}" is a directory. Use list_skill_files to explore it.`,
+      error: `"${targetRel}" is a directory. Use \`list_skill_files\` to explore it.`,
     };
   }
 
@@ -181,7 +403,7 @@ export function readAbsolutePath(
   }
   if (fs.statSync(resolved).isDirectory()) {
     return {
-      error: `"${resolved}" is a directory. Use list_skill_files to explore it.`,
+      error: `"${resolved}" is a directory. Use \`list_skill_files\` to explore it.`,
     };
   }
 

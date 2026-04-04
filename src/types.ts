@@ -1,6 +1,8 @@
 export interface SkillInfo {
   name: string;
   description: string;
+  bodyExcerpt: string;
+  tags: string[];
   skillMdPath: string;
   directoryPath: string;
   hasExtraFiles: boolean;
@@ -9,18 +11,21 @@ export interface SkillInfo {
 export interface SkillManifestFile {
   name?: string;
   description?: string;
+  tags?: string[];
 }
 
 export interface PersistedSettings {
-  skillsPath: string;
+  skillsPaths: string[];
   autoInject: boolean;
   maxSkillsInContext: number;
+  shellPath: string;
 }
 
 export interface EffectiveConfig {
-  skillsPath: string;
+  skillsPaths: string[];
   autoInject: boolean;
   maxSkillsInContext: number;
+  shellPath: string;
 }
 
 export interface DirectoryEntry {

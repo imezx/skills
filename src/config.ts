@@ -47,20 +47,20 @@ export const configSchematics = createConfigSchematics()
     "skillsPath",
     "string",
     {
-      displayName: "Skills Directory Path",
+      displayName: "Skills Paths",
       subtitle:
-        'Path to your skills directory. Leave empty to use the last saved path. Enter "default" to reset to ~/.lmstudio/skills',
+        'Semicolon-separated list of skill directories, loaded in order. Leave empty to use last saved paths. Enter "default" to reset to ~/.lmstudio/skills',
     },
     "",
   )
   .field(
-    "recommendedSystemPrompt",
+    "shellPath",
     "string",
     {
-      displayName: "Recommended System Prompt",
+      displayName: "Shell Path (optional)",
       subtitle:
-        "Copy this into your model's system prompt. It tells the model when and how to use skills - kept here so it only needs to be set once, not repeated on every message.",
+        "Override the shell used by run_command. Leave empty to auto-detect (bash on Unix, pwsh/powershell/cmd on Windows).",
     },
-    "You have access to a set of skills listed in <available_skills>. Each skill is a directory containing a SKILL.md file with instructions and best practices built from real trial and error. Before starting any task that matches a skill, call read_skill_file with the skill name or its location path to load its instructions - always do this before writing any code, creating files, or producing output the skill covers. Multiple skills may be relevant to a single task; read all of them before proceeding, do not limit yourself to one. After reading SKILL.md, if it references additional files, call list_skill_files to discover them, then read whichever ones apply. Use list_skills to refresh the available skills list at any time.",
+    "",
   )
   .build();

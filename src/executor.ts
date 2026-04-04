@@ -27,6 +27,8 @@ export interface ExecResult {
 export interface ExecOptions {
   cwd?: string;
   timeoutMs?: number;
+  shellPath?: string;
+  env?: Record<string, string>;
 }
 
 function detectPlatform(): Platform {
@@ -35,8 +37,12 @@ function detectPlatform(): Platform {
   return "linux";
 }
 
-function resolveShell(): ShellInfo {
+function resolveShell(override?: string): ShellInfo {
   const platform = detectPlatform();
+
+  if (override && override.trim()) {
+    return { path: override.trim(), args: ["-c"], platform };
+  }
 
   if (platform === "windows") {
     const pwshCore = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
@@ -109,7 +115,7 @@ export function execCommand(
   options: ExecOptions = {},
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const shellInfo = resolveShell();
+    const shellInfo = resolveShell(options.shellPath);
     const cwd = resolveCwd(options.cwd);
     const timeoutMs = Math.min(
       options.timeoutMs ?? EXEC_DEFAULT_TIMEOUT_MS,
@@ -120,6 +126,7 @@ export function execCommand(
       ...process.env,
       PYTHONUTF8: "1",
       PYTHONIOENCODING: "utf-8",
+      ...(options.env ?? {}),
     };
 
     let proc: child_process.ChildProcess;

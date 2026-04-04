@@ -1,6 +1,6 @@
 import { resolveEffectiveConfig } from "./settings";
 import { scanSkills } from "./scanner";
-import { MIN_PROMPT_LENGTH } from "./constants";
+import { MIN_PROMPT_LENGTH, REINJECT_INTERVAL_MS } from "./constants";
 import type { PluginController } from "./pluginTypes";
 import type { SkillInfo } from "./types";
 
@@ -10,9 +10,9 @@ function buildAvailableSkillsBlock(skills: SkillInfo[], limit: number): string {
     .map((s) =>
       [
         `<skill>`,
-        `<name>`,
+        `<n>`,
         s.name,
-        `</name>`,
+        `</n>`,
         `<description>`,
         s.description,
         `</description>`,
@@ -28,7 +28,7 @@ function buildAvailableSkillsBlock(skills: SkillInfo[], limit: number): string {
 }
 
 function buildInstruction(): string {
-  return "You have access to a set of skills listed in <available_skills>. Each skill is a directory containing a SKILL.md file with instructions and best practices built from real trial and error. Before starting any task that matches a skill, call read_skill_file with the skill name or its location path to load its instructions - always do this before writing any code, creating files, or producing output the skill covers. Multiple skills may be relevant to a single task; read all of them before proceeding, do not limit yourself to one. After reading SKILL.md, if it references additional files, call list_skill_files to discover them, then read whichever ones apply. Use list_skills to refresh the available skills list at any time.";
+  return "You have access to a set of skills listed in <available_skills>. Each skill is a directory containing a SKILL.md file with instructions and best practices built from real trial and error. Before starting any task that matches a skill, call `read_skill_file` with the skill name or its location path to load its instructions - always do this before writing any code, creating files, or producing output the skill covers. Multiple skills may be relevant to a single task; read all of them before proceeding, do not limit yourself to one. After reading SKILL.md, if it references additional files, call `list_skill_files` to discover them, then read whichever ones apply. Use `list_skills` with a query to search for relevant skills by name and description when the task does not match anything in the list above - not all installed skills may be shown here.";
 }
 
 function buildInjection(skills: SkillInfo[], limit: number): string {
@@ -38,6 +38,16 @@ function buildInjection(skills: SkillInfo[], limit: number): string {
     buildAvailableSkillsBlock(skills, limit),
   ].join("\n");
 }
+
+function computeFingerprint(skills: SkillInfo[]): string {
+  return skills
+    .map((s) => s.skillMdPath)
+    .sort()
+    .join("|");
+}
+
+let lastFingerprint = "";
+let lastInjectedAt = 0;
 
 type MessageContent =
   | { type: "text"; text: string }
@@ -114,8 +124,19 @@ export async function promptPreprocessor(
   if (text.trim().length < MIN_PROMPT_LENGTH) return userMessage;
 
   try {
-    const skills = scanSkills(cfg.skillsPath);
+    const skills = scanSkills(cfg.skillsPaths);
     if (skills.length === 0) return userMessage;
+
+    const fingerprint = computeFingerprint(skills);
+    const now = Date.now();
+    const skillsChanged = fingerprint !== lastFingerprint;
+    const intervalElapsed = now - lastInjectedAt > REINJECT_INTERVAL_MS;
+
+    if (!skillsChanged && !intervalElapsed) return userMessage;
+
+    lastFingerprint = fingerprint;
+    lastInjectedAt = now;
+
     return injectIntoMessage(
       userMessage,
       buildInjection(skills, cfg.maxSkillsInContext),
