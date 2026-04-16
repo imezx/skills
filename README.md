@@ -29,9 +29,9 @@ LM Studio does not save plugin settings across new chats. This plugin solves tha
 A skill is any subdirectory inside your skills folder that contains a `SKILL.md` file.
 
 ```
-~/.lmstudio/skills/          ← default skills directory
+~/.lmstudio/skills/          <- default skills directory
 ├── docx/
-│   ├── SKILL.md             ← entry point (required)
+│   ├── SKILL.md             <- entry point (required)
 │   ├── scripts/
 │   │   └── helper.py
 │   └── templates/
@@ -41,7 +41,7 @@ A skill is any subdirectory inside your skills folder that contains a `SKILL.md`
 │   └── editing.md
 └── my-custom-skill/
     ├── SKILL.md
-    └── skill.json           ← optional: override name/description
+    └── skill.json           <- optional: override name/description
 ```
 
 ### `skill.json` (optional)
@@ -51,7 +51,17 @@ Place a `skill.json` in any skill directory to override its display name and des
 ```json
 {
   "name": "My Custom Skill",
-  "description": "Use this skill when the user asks to do X, Y, or Z."
+  "description": "Use this skill when the user asks to do X, Y, or Z.",
+  "tags": [
+    "data analysis",
+    "csv",
+    "statistics",
+    "charts",
+    "visualisation",
+    "pandas",
+    "trends",
+    "dataset"
+  ]
 }
 ```
 

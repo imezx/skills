@@ -1,4 +1,15 @@
 {
   "name": "git-commit",
-  "description": "Use this skill when asked to write a git commit message, PR description, changelog entry, or release notes. Triggers on: 'write a commit message', 'commit message for this', 'write a PR description', 'changelog entry', 'release notes'."
+  "description": "Use this skill when asked to write a git commit message, PR description, changelog entry, or release notes. Triggers on: 'write a commit message', 'commit message for this', 'write a PR description', 'changelog entry', 'release notes'.",
+  "tags": [
+    "git",
+    "commit message",
+    "commit",
+    "pull request",
+    "pr description",
+    "changelog",
+    "release notes",
+    "semantic versioning",
+    "conventional commits"
+  ]
 }
