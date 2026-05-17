@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import { tool } from "@lmstudio/sdk";
 import { z } from "zod";
@@ -57,8 +58,8 @@ export async function toolsProvider(ctl: PluginController) {
         .optional()
         .describe(
           "Optional search query to filter and rank skills by relevance. " +
-            "Matches against skill names, tags, descriptions, and SKILL.md body using IDF-weighted token scoring, phrase proximity, and partial prefix matching. " +
-            "Omit to list all skills.",
+          "Matches against skill names, tags, descriptions, and SKILL.md body using IDF-weighted token scoring, phrase proximity, and partial prefix matching. " +
+          "Omit to list all skills.",
         ),
       limit: z
         .number()
@@ -98,8 +99,8 @@ export async function toolsProvider(ctl: PluginController) {
           found: page.length,
           ...(results.length > cap
             ? {
-                note: `Showing top ${cap} of ${results.length} matches. Refine your query or increase the limit to see more.`,
-              }
+              note: `Showing top ${cap} of ${results.length} matches. Refine your query or increase the limit to see more.`,
+            }
             : {}),
           skills: page.map(({ skill, score }) => ({
             name: skill.name,
@@ -134,8 +135,8 @@ export async function toolsProvider(ctl: PluginController) {
         skillsPaths: cfg.skillsPaths,
         ...(skills.length > cap
           ? {
-              note: `Showing ${cap} of ${skills.length} skills. Increase the limit or use a query to find specific skills.`,
-            }
+            note: `Showing ${cap} of ${skills.length} skills. Increase the limit or use a query to find specific skills.`,
+          }
           : {}),
         skills: page.map((s) => ({
           name: s.name,
@@ -168,7 +169,7 @@ export async function toolsProvider(ctl: PluginController) {
         .optional()
         .describe(
           "Relative path to a file within the skill directory. Omit to read SKILL.md. " +
-            "Ignored when skill_name is an absolute path.",
+          "Ignored when skill_name is an absolute path.",
         ),
     },
     implementation: async ({ skill_name, file_path }, { status }) => {
@@ -223,8 +224,8 @@ export async function toolsProvider(ctl: PluginController) {
         hasExtraFiles: skill.hasExtraFiles,
         ...(skill.hasExtraFiles
           ? {
-              hint: "This skill has additional files. Call list_skill_files to explore them.",
-            }
+            hint: "This skill has additional files. Call list_skill_files to explore them.",
+          }
           : {}),
       };
     },
@@ -314,6 +315,108 @@ export async function toolsProvider(ctl: PluginController) {
     },
   });
 
+  const readFileTool = tool({
+    name: "read_file",
+    description: "Read the contents of any file in the user's workspace. Use this to inspect code, data, or configuration files outside of the skills directory.",
+    parameters: {
+      file_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path to the file to read."),
+    },
+    implementation: async ({ file_path }, { status }) => {
+      status(`Reading ${path.basename(file_path)}..`);
+      const result = readAbsolutePath(file_path);
+      if ("error" in result) return { success: false, error: result.error };
+      status(`Read ${Math.round(result.content.length / 1024)}KB`);
+      return {
+        success: true,
+        filePath: result.resolvedPath,
+        content: result.content,
+      };
+    },
+  });
+
+  const writeFileTool = tool({
+    name: "write_file",
+    description: "Create or overwrite a file completely with new content. Prefer this over run_command for writing code or text, as it avoids shell escaping issues.",
+    parameters: {
+      file_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path to the file to write."),
+      content: z
+        .string()
+        .describe("The full content to write to the file."),
+    },
+    implementation: async ({ file_path, content }, { status }) => {
+      status(`Writing ${path.basename(file_path)}..`);
+      try {
+        const resolved = path.resolve(file_path);
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        fs.writeFileSync(resolved, content, "utf-8");
+        status(`Wrote ${Math.round(content.length / 1024)}KB`);
+        return {
+          success: true,
+          filePath: resolved,
+          bytesWritten: Buffer.byteLength(content, "utf8"),
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
+  const patchFileTool = tool({
+    name: "patch_file",
+    description: "Modify an existing file by replacing a specific search string with a new string. Prefer this over write_file when making small changes to large files.",
+    parameters: {
+      file_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path to the file to modify."),
+      search_string: z
+        .string()
+        .min(1)
+        .describe("The exact string to find in the file. Must match exactly, including whitespace and indentation."),
+      replace_string: z
+        .string()
+        .describe("The string to replace the search_string with."),
+    },
+    implementation: async ({ file_path, search_string, replace_string }, { status }) => {
+      status(`Patching ${path.basename(file_path)}..`);
+      try {
+        const resolved = path.resolve(file_path);
+        if (!fs.existsSync(resolved)) {
+          return { success: false, error: `File not found: ${resolved}` };
+        }
+        const content = fs.readFileSync(resolved, "utf-8");
+        if (!content.includes(search_string)) {
+          return {
+            success: false,
+            error: "Search string not found in file. Ensure exact whitespace/indentation.",
+          };
+        }
+        const patched = content.replace(search_string, replace_string);
+        fs.writeFileSync(resolved, patched, "utf-8");
+        status(`Patched file`);
+        return {
+          success: true,
+          filePath: resolved,
+          note: "Replaced first occurrence of search_string.",
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
   const runCommandTool = tool({
     name: "run_command",
     description:
@@ -321,7 +424,8 @@ export async function toolsProvider(ctl: PluginController) {
       "On Windows this runs in PowerShell Core (pwsh.exe), PowerShell (powershell.exe), or cmd.exe - whichever is available, in that order. " +
       "On macOS and Linux this runs in bash or sh. " +
       "The platform and shell fields in the response tell you exactly which shell was used so you can adapt syntax accordingly. " +
-      "Use this to run Python scripts from skills, install packages, read or write files, or perform any system task. " +
+      "Use this to run scripts, install packages, or perform system tasks. " +
+      "IMPORTANT: Do NOT use this to write or edit files via `echo` or `cat`. Use the `write_file` or `patch_file` tools instead. " +
       "Python scripts referenced by skills can be executed directly - copy the script path from list_skill_files and run it with python3 (or python on Windows).",
     parameters: {
       command: z
@@ -380,13 +484,13 @@ export async function toolsProvider(ctl: PluginController) {
         shell: result.shell,
         ...(result.timedOut
           ? {
-              hint: "Command exceeded the timeout. Try increasing timeout_ms or splitting into smaller steps.",
-            }
+            hint: "Command exceeded the timeout. Try increasing timeout_ms or splitting into smaller steps.",
+          }
           : {}),
         ...(result.exitCode !== 0 && !result.timedOut && result.stderr
           ? {
-              hint: "Command exited with a non-zero code. Check stderr for details.",
-            }
+            hint: "Command exited with a non-zero code. Check stderr for details.",
+          }
           : {}),
       };
     },
@@ -396,6 +500,9 @@ export async function toolsProvider(ctl: PluginController) {
     listSkillsTool,
     readSkillFileTool,
     listSkillFilesTool,
+    readFileTool,
+    writeFileTool,
+    patchFileTool,
     runCommandTool,
   ];
 }
