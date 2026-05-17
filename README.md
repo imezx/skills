@@ -18,6 +18,10 @@ Before every message, the plugin scans the skills directory and injects an `<ava
 | `list_skills` | List all available skills with names and descriptions |
 | `read_skill_file` | Read any file within a skill directory (defaults to `SKILL.md`) |
 | `list_skill_files` | Explore the full file tree of a skill directory |
+| `read_file` | Read the contents of any file in the workspace outside of the skills directory |
+| `write_file` | Create or overwrite a file with exact contents, avoiding shell escaping issues |
+| `patch_file` | Find and replace a specific string inside an existing file for surgical code edits |
+| `run_command` | Execute shell commands, run Python scripts, and interact with the system |
 
 **3. Persistent Settings**
 LM Studio does not save plugin settings across new chats. This plugin solves that by writing settings to `~/.lmstudio/plugin-data/lms-skills/settings.json` - the skills path and all configuration survive chat resets.
@@ -117,6 +121,7 @@ The default path `~/.lmstudio/skills` resolves to:
 4. Model calls `read_skill_file("skill-name")` -> receives full `SKILL.md` content
 5. `SKILL.md` may reference other files -> model calls `list_skill_files` then `read_skill_file` with specific path
 6. Model follows the skill's instructions to produce high-quality output
+7. Model uses read_file, patch_file, and write_file to execute the actual coding and file management tasks required by the user
 
 ## License
 

@@ -8,6 +8,9 @@ import {
   BODY_EXCERPT_CHARS,
   MAX_DIRECTORY_DEPTH,
   MAX_DIRECTORY_ENTRIES,
+  BM25_K1,
+  BM25_B,
+  FIELD_WEIGHTS,
 } from "./constants";
 import type { SkillInfo, SkillManifestFile, DirectoryEntry } from "./types";
 
@@ -199,7 +202,50 @@ function scanSkillsDir(skillsDir: string): SkillInfo[] {
   }
 }
 
+let cachedSkills: SkillInfo[] | null = null;
+let searchIndex: SearchIndex | null = null;
+let watchers: fs.FSWatcher[] = [];
+let isWatchingPaths = "";
+
+function setupWatchers(skillsDirs: string[]) {
+  const currentPaths = skillsDirs.join(";");
+  if (isWatchingPaths === currentPaths) return;
+
+  watchers.forEach((w) => {
+    try { w.close(); } catch { }
+  });
+  watchers = [];
+  isWatchingPaths = currentPaths;
+
+  for (const dir of skillsDirs) {
+    if (!fs.existsSync(dir)) continue;
+    try {
+      const w = fs.watch(dir, { recursive: true }, () => {
+        cachedSkills = null;
+        searchIndex = null;
+      });
+      w.on("error", () => { }); // catch watch limits silently
+      watchers.push(w);
+    } catch {
+      try {
+        const w = fs.watch(dir, () => {
+          cachedSkills = null;
+          searchIndex = null;
+        });
+        w.on("error", () => { });
+        watchers.push(w);
+      } catch {
+        // watcher unsupported on this OS configuration
+      }
+    }
+  }
+}
+
 export function scanSkills(skillsDirs: string[]): SkillInfo[] {
+  setupWatchers(skillsDirs);
+
+  if (cachedSkills) return cachedSkills;
+
   const seen = new Set<string>();
   const merged: SkillInfo[] = [];
 
@@ -212,7 +258,8 @@ export function scanSkills(skillsDirs: string[]): SkillInfo[] {
     }
   }
 
-  return merged.sort((a, b) => a.name.localeCompare(b.name));
+  cachedSkills = merged.sort((a, b) => a.name.localeCompare(b.name));
+  return cachedSkills;
 }
 
 export interface SkillSearchResult {
@@ -227,62 +274,59 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 0);
 }
 
-function computeIdf(skills: SkillInfo[]): Map<string, number> {
+interface SearchIndex {
+  idf: Map<string, number>;
+  avgLengths: Record<keyof typeof FIELD_WEIGHTS, number>;
+  docTokens: Map<string, Record<keyof typeof FIELD_WEIGHTS, string[]>>;
+}
+
+function buildSearchIndex(skills: SkillInfo[]) {
+  const idf = new Map<string, number>();
   const docFreq = new Map<string, number>();
+  const lengths = { name: 0, tags: 0, description: 0, bodyExcerpt: 0 };
+  const docTokens = new Map<string, Record<keyof typeof FIELD_WEIGHTS, string[]>>();
+
   const N = skills.length;
 
   for (const skill of skills) {
-    const allTokens = new Set([
-      ...tokenize(skill.name),
-      ...tokenize(skill.description),
-      ...tokenize(skill.bodyExcerpt),
-      ...skill.tags.flatMap((t) => tokenize(t)),
+    const tokens = {
+      name: tokenize(skill.name),
+      tags: skill.tags.flatMap((t) => tokenize(t)),
+      description: tokenize(skill.description),
+      bodyExcerpt: tokenize(skill.bodyExcerpt),
+    };
+    docTokens.set(skill.directoryPath, tokens);
+
+    lengths.name += tokens.name.length;
+    lengths.tags += tokens.tags.length;
+    lengths.description += tokens.description.length;
+    lengths.bodyExcerpt += tokens.bodyExcerpt.length;
+
+    const uniqueTokens = new Set([
+      ...tokens.name,
+      ...tokens.tags,
+      ...tokens.description,
+      ...tokens.bodyExcerpt,
     ]);
-    for (const token of allTokens) {
-      docFreq.set(token, (docFreq.get(token) ?? 0) + 1);
+
+    for (const t of uniqueTokens) {
+      docFreq.set(t, (docFreq.get(t) ?? 0) + 1);
     }
   }
 
-  const idf = new Map<string, number>();
+  const avgLengths = {
+    name: lengths.name / (N || 1),
+    tags: lengths.tags / (N || 1),
+    description: lengths.description / (N || 1),
+    bodyExcerpt: lengths.bodyExcerpt / (N || 1),
+  };
+
   for (const [token, df] of docFreq) {
-    idf.set(token, Math.log((N + 1) / (df + 1)) + 1);
+    const idfValue = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+    idf.set(token, idfValue);
   }
 
-  return idf;
-}
-
-function scoreToken(token: string, candidate: string): number {
-  if (candidate === token) return 1.0;
-  if (candidate.startsWith(token) && token.length >= 3) return 0.6;
-  if (candidate.includes(token) && token.length >= 4) return 0.3;
-  return 0;
-}
-
-function scoreField(
-  queryTokens: string[],
-  fieldTokens: string[],
-  idf: Map<string, number>,
-): number {
-  if (queryTokens.length === 0 || fieldTokens.length === 0) return 0;
-
-  let weightedTotal = 0;
-  let weightSum = 0;
-
-  for (const qt of queryTokens) {
-    const weight = idf.get(qt) ?? 1.0;
-    let best = 0;
-    for (const ft of fieldTokens) {
-      best = Math.max(best, scoreToken(qt, ft));
-    }
-    weightedTotal += best * weight;
-    weightSum += weight;
-  }
-
-  if (weightSum === 0) return 0;
-
-  const coverage = weightedTotal / weightSum;
-  const density = Math.min(weightedTotal / fieldTokens.length, 1.0);
-  return coverage * 0.7 + density * 0.3;
+  searchIndex = { idf, avgLengths, docTokens };
 }
 
 export function searchSkills(
@@ -294,58 +338,67 @@ export function searchSkills(
 
   const queryLower = query.toLowerCase().trim();
   const allSkills = scanSkills(skillsDirs);
-  const idf = computeIdf(allSkills);
+
+  if (!searchIndex) buildSearchIndex(allSkills);
+  const { idf, avgLengths, docTokens } = searchIndex!;
+
   const results: SkillSearchResult[] = [];
 
   for (const skill of allSkills) {
     const nameLower = skill.name.toLowerCase();
 
     if (nameLower === queryLower) {
-      results.push({ skill, score: 10.0 });
+      results.push({ skill, score: 100.0 });
       continue;
     }
 
-    const nameTokens = tokenize(skill.name);
-    const descTokens = tokenize(skill.description);
-    const bodyTokens = tokenize(skill.bodyExcerpt);
+    const tokens = docTokens.get(skill.directoryPath)!;
+    let totalScore = 0;
 
-    const nameScore = scoreField(queryTokens, nameTokens, idf);
-    const descScore = scoreField(queryTokens, descTokens, idf);
-    const bodyScore = scoreField(queryTokens, bodyTokens, idf);
+    for (const qToken of queryTokens) {
+      let matchedIdf = idf.get(qToken) ?? 0;
+      let isPrefix = false;
 
-    const phraseNameBonus = nameLower.includes(queryLower) ? 0.4 : 0;
-    const phraseDescBonus = skill.description.toLowerCase().includes(queryLower)
-      ? 0.2
-      : 0;
+      if (matchedIdf === 0) {
+        for (const [k, v] of idf.entries()) {
+          if (k.startsWith(qToken) && qToken.length >= 3) {
+            matchedIdf = Math.max(matchedIdf, v * 0.5);
+            isPrefix = true;
+          }
+        }
+      }
 
-    let tagScore = 0;
-    for (const tag of skill.tags) {
-      const tagLower = tag.toLowerCase();
-      if (tagLower === queryLower) {
-        tagScore = Math.max(tagScore, 1.0);
-      } else if (
-        tagLower.includes(queryLower) ||
-        queryLower.includes(tagLower)
-      ) {
-        tagScore = Math.max(tagScore, 0.6);
-      } else {
-        tagScore = Math.max(
-          tagScore,
-          scoreField(queryTokens, tokenize(tag), idf),
-        );
+      if (matchedIdf === 0) continue;
+
+      for (const [fieldStr, weight] of Object.entries(FIELD_WEIGHTS)) {
+        const field = fieldStr as keyof typeof FIELD_WEIGHTS;
+        const fieldTokens = tokens[field];
+        if (fieldTokens.length === 0) continue;
+
+        let tf = 0;
+        for (const ft of fieldTokens) {
+          if (ft === qToken) tf += 1;
+          else if (isPrefix && ft.startsWith(qToken)) tf += 0.5;
+          else if (qToken.length >= 4 && ft.includes(qToken)) tf += 0.3;
+        }
+
+        if (tf > 0) {
+          const avgdl = avgLengths[field] || 1;
+          const fieldScore =
+            matchedIdf *
+            ((tf * (BM25_K1 + 1)) /
+              (tf + BM25_K1 * (1 - BM25_B + BM25_B * (fieldTokens.length / avgdl))));
+          totalScore += fieldScore * weight;
+        }
       }
     }
 
-    const score =
-      nameScore * 3.0 +
-      tagScore * 2.5 +
-      descScore * 1.5 +
-      bodyScore * 0.8 +
-      phraseNameBonus +
-      phraseDescBonus;
+    if (nameLower.includes(queryLower)) totalScore += 5.0;
+    if (skill.description.toLowerCase().includes(queryLower)) totalScore += 2.0;
+    if (skill.tags.some((t) => t.toLowerCase() === queryLower)) totalScore += 4.0;
 
-    if (score > 0.15) {
-      results.push({ skill, score });
+    if (totalScore > 0.5) {
+      results.push({ skill, score: totalScore });
     }
   }
 
@@ -464,7 +517,7 @@ function walkDirectory(
       let sizeBytes: number | undefined;
       try {
         sizeBytes = fs.statSync(fullPath).size;
-      } catch {}
+      } catch { }
       entries.push({ name: entry.name, relativePath, type: "file", sizeBytes });
     }
   }

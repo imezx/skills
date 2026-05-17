@@ -41,7 +41,7 @@ function buildInjection(skills: SkillInfo[], limit: number): string {
 
 function computeFingerprint(skills: SkillInfo[]): string {
   return skills
-    .map((s) => s.skillMdPath)
+    .map((s) => `${s.skillMdPath}:${s.description}`)
     .sort()
     .join("|");
 }
@@ -51,7 +51,7 @@ let lastInjectedAt = 0;
 
 type MessageContent =
   | { type: "text"; text: string }
-  | { type: string; [key: string]: unknown };
+  | { type: string;[key: string]: unknown };
 type MessageInput = string | { content: string | MessageContent[] } | unknown;
 
 function extractText(message: MessageInput): string {
