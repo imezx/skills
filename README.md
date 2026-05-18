@@ -96,7 +96,7 @@ Settings (including the skills path) are written to disk and survive new chat se
 ```bash
 cd lms-plugin-skills
 bun install
-bun run dev
+lms dev
 ```
 
 ---
@@ -125,4 +125,4 @@ The default path `~/.lmstudio/skills` resolves to:
 
 ## License
 
-Apache 2.0
+- [Apache 2.0](LICENSE)
