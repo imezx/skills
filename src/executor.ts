@@ -52,26 +52,14 @@ function resolveShell(override?: string): ShellInfo {
     if (fs.existsSync(pwshCore)) {
       return {
         path: pwshCore,
-        args: [
-          "-NoProfile",
-          "-NonInteractive",
-          "-OutputEncoding",
-          "UTF8",
-          "-Command",
-        ],
+        args: ["-NoProfile", "-NonInteractive", "-Command"],
         platform,
       };
     }
     if (fs.existsSync(pwshBuiltin)) {
       return {
         path: pwshBuiltin,
-        args: [
-          "-NoProfile",
-          "-NonInteractive",
-          "-OutputEncoding",
-          "UTF8",
-          "-Command",
-        ],
+        args: ["-NoProfile", "-NonInteractive", "-Command"],
         platform,
       };
     }
@@ -132,7 +120,15 @@ export function execCommand(
     let proc: child_process.ChildProcess;
 
     try {
-      proc = child_process.spawn(shellInfo.path, [...shellInfo.args, command], {
+      const isPowerShell =
+        shellInfo.path.toLowerCase().endsWith("powershell.exe") ||
+        shellInfo.path.toLowerCase().endsWith("pwsh.exe");
+
+      const finalCommand = isPowerShell
+        ? `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`
+        : command;
+
+      proc = child_process.spawn(shellInfo.path, [...shellInfo.args, finalCommand], {
         cwd,
         env,
         windowsHide: true,
