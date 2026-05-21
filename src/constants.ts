@@ -37,7 +37,10 @@ export const EXEC_MAX_COMMAND_LENGTH = 8_000;
 
 export const SKILLS_PATH_SEPARATOR = ";";
 export const CONFIG_CACHE_TTL_MS = 5_000;
-export const REINJECT_INTERVAL_MS = 30 * 60 * 1_000;
+export const REINJECT_INTERVAL_MS = 15 * 60 * 1_000;
+
+export const EXPLICIT_SKILL_REGEX = /(?<![a-zA-Z0-9:/])\/([a-z][a-z0-9._-]*)/g;
+export const EXPLICIT_SKILL_CONTEXT_TAG = "skill_context";
 
 export const BM25_K1 = 1.2;
 export const BM25_B = 0.75;

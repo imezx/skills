@@ -30,8 +30,28 @@ Before every message, the plugin scans the skills directory and injects an `<ava
 | `get_current_directory` | Returns home directory, current working directory, and platform info to eliminate path guessing across operating systems. |
 | `run_command` | Execute shell commands, run scripts, and interact directly with the local system |
 
-**3. Persistent Settings**
-LM Studio does not save plugin settings across new chats. This plugin solves that by writing settings to `~/.lmstudio/plugin-data/lms-skills/settings.json` - the skills path and all configuration survive chat resets.
+**3. Explicit Skill Activation**
+
+You can activate a skill directly from your message using `/skill-name` notation:
+
+```
+/bug-fix there is a null pointer error in this function: …
+use /git-commit to push my changes
+/docx write a report summarising the findings
+```
+
+Any token matching `/[a-z][a-z0-9._-]*` (regex) is treated as an explicit activation. The preprocessor resolves it before the request reaches the model:
+
+- The matching `SKILL.md` body is expanded inline into a `<skill_context>` block - the model does **not** need to call `read_skill_file` for it.
+- The named skill is treated as the highest-priority context; all other message text is secondary task payload.
+- Quoted strings, code snippets, globs, and command-looking text in the message are passed through to the skill untouched.
+- `run_command` must not be used for exploration when a skill is explicitly activated.
+- If the name does not match any installed skill, the model is instructed to call `list_skills` with that name as a query before proceeding.
+
+Multiple activations in one message are supported (`/skill-a` and `/skill-b` are both expanded). Explicit activation takes priority over auto-inject; the `<available_skills>` block is not appended on the same turn.
+
+**4. Persistent Settings**
+LM Studio does not save plugin settings across new chats. This plugin solves that by writing settings to `~/.lmstudio/plugin-data/lms-skills/settings.json` - the skills path and all configuration survive chat resets when only `skillsPath` field set as `default`.
 
 ---
 
@@ -122,13 +142,23 @@ The default path `~/.lmstudio/skills` resolves to:
 
 ## Model Workflow
 
+### Auto-inject (default)
+
 1. User sends a message
 2. Preprocessor fires - scans skills dir, injects `<available_skills>` block
 3. Model reads the block and recognises a relevant skill
-4. Model calls `read_skill_file("skill-name")` -> receives full `SKILL.md` content
-5. `SKILL.md` may reference other files -> model calls `list_skill_files` then `read_skill_file` with specific path
+4. Model calls `read_skill_file("skill-name")` → receives full `SKILL.md` content
+5. `SKILL.md` may reference other files → model calls `list_skill_files` then `read_skill_file` with specific path
 6. Model follows the skill's instructions to produce high-quality output
-7. Model uses `read_file`, `patch_file`, and `write_file` to execute the actual coding and file management tasks required by the user
+7. Model uses `read_file`, `patch_file`, and `write_file` to execute the actual coding and file management tasks
+
+### Explicit activation (`/skill-name`)
+
+1. User includes `/skill-name` anywhere in their message (prompt)
+2. Preprocessor detects the tokens, resolves the skill, and expands its `SKILL.md` into a `<skill_context>` block - no tool call needed
+3. Model receives the expanded skill body as highest-priority context alongside the user's task payload
+4. If the skill name is not found, the model calls `list_skills` to locate it before proceeding
+5. Model follows the skill's instructions to produce high-quality output
 
 ## License
 
