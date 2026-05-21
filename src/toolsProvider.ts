@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { tool } from "@lmstudio/sdk";
 import { z } from "zod";
@@ -496,6 +497,343 @@ export async function toolsProvider(ctl: PluginController) {
     },
   });
 
+  const createDirectoryTool = tool({
+    name: "create_directory",
+    description:
+      "Create a directory (and any missing parent directories) at the given path. " +
+      "Idempotent: succeeds silently if the directory already exists, so it is safe to call " +
+      "without checking first. Equivalent to `mkdir -p` / `New-Item -Force -ItemType Directory`.",
+    parameters: {
+      dir_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path of the directory to create. Supports ~ for the home directory."),
+    },
+    implementation: async ({ dir_path }, { status }) => {
+      status(`Creating directory ${path.basename(dir_path)}..`);
+      try {
+        const resolved = path.resolve(dir_path.replace(/^~/, os.homedir()));
+        const alreadyExisted = fs.existsSync(resolved);
+        fs.mkdirSync(resolved, { recursive: true });
+        status(alreadyExisted ? "Already exists" : "Created");
+        return {
+          success: true,
+          dirPath: resolved,
+          alreadyExisted,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
+  const getCurrentDirectoryTool = tool({
+    name: "get_current_directory",
+    description:
+      "Return path information about the user's environment: home directory, current working " +
+      "directory, platform, and path separator. " +
+      "Call this at the start of any task that involves absolute paths so you know the correct " +
+      "base path without guessing the username or drive letter " +
+      "(e.g. C:\\Users\\user on Windows, /Users/user on macOS, /home/user on Linux).",
+    parameters: {},
+    implementation: async (_params, { status }) => {
+      status("Resolving paths..");
+      const homeDir = os.homedir();
+      const cwd = process.cwd();
+      const platform = os.platform(); // 'win32' | 'darwin' | 'linux' | ...
+      const sep = path.sep; // '\\' on Windows, '/' elsewhere
+      status("Done");
+      return {
+        success: true,
+        homeDir,
+        cwd,
+        platform,
+        pathSeparator: sep,
+        note:
+          platform === "win32"
+            ? "Windows: use backslashes or forward slashes in paths."
+            : "Unix-like: use forward slashes in paths.",
+      };
+    },
+  });
+
+  const listDirectoryTool = tool({
+    name: "list_directory",
+    description:
+      "List the contents of any directory on the user's machine, returning a tree of files and " +
+      "subdirectories. Use this to understand a project's structure before reading or editing files. " +
+      "Prefer this over running `ls` or `dir` via `run_command` - it works the same on every platform.",
+    parameters: {
+      dir_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path of the directory to list. Supports ~ for the home directory."),
+      recursive: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, lists all files and subdirectories recursively. " +
+          "Defaults to false (one level only). Avoid on very large trees.",
+        ),
+    },
+    implementation: async ({ dir_path, recursive = false }, { status }) => {
+      status(`Listing ${path.basename(dir_path)}..`);
+      try {
+        const resolved = path.resolve(dir_path.replace(/^~/, os.homedir()));
+
+        if (!fs.existsSync(resolved)) {
+          return { success: false, error: `Directory not found: ${resolved}` };
+        }
+
+        const stat = fs.statSync(resolved);
+        if (!stat.isDirectory()) {
+          return { success: false, error: `Path is not a directory: ${resolved}` };
+        }
+
+        const MAX_DEPTH = recursive ? 10 : 1;
+        const entries: Array<{ name: string; relativePath: string; type: "file" | "directory"; sizeBytes?: number }> = [];
+
+        function walk(dir: string, relBase: string, depth: number) {
+          if (depth > MAX_DEPTH) return;
+          const children = fs.readdirSync(dir, { withFileTypes: true });
+          for (const child of children) {
+            const rel = relBase ? `${relBase}/${child.name}` : child.name;
+            const abs = path.join(dir, child.name);
+            if (child.isDirectory()) {
+              entries.push({ name: child.name, relativePath: rel, type: "directory" });
+              walk(abs, rel, depth + 1);
+            } else {
+              const size = fs.statSync(abs).size;
+              entries.push({ name: child.name, relativePath: rel, type: "file", sizeBytes: size });
+            }
+          }
+        }
+
+        walk(resolved, "", 0);
+        const formatted = formatDirEntries(entries, path.basename(resolved));
+        status(`Found ${entries.length} entries`);
+
+        return {
+          success: true,
+          dirPath: resolved,
+          entryCount: entries.length,
+          tree: formatted,
+          entries: entries.map((e) => ({
+            name: e.name,
+            path: e.relativePath,
+            type: e.type,
+            ...(e.sizeBytes !== undefined ? { sizeBytes: e.sizeBytes } : {}),
+          })),
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
+  const deleteFileTool = tool({
+    name: "delete_file",
+    description:
+      "Permanently delete a file or an empty directory. " +
+      "To delete a directory and all its contents recursively, set recursive to true - " +
+      "use with caution as this cannot be undone. " +
+      "Prefer this over shell commands like `rm` or `Remove-Item` for cross-platform reliability.",
+    parameters: {
+      file_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path to the file or directory to delete. Supports ~ for the home directory."),
+      recursive: z
+        .boolean()
+        .optional()
+        .describe(
+          "When true, deletes a directory and all its contents recursively. " +
+          "Defaults to false. Has no effect on plain files.",
+        ),
+    },
+    implementation: async ({ file_path, recursive = false }, { status }) => {
+      status(`Deleting ${path.basename(file_path)}..`);
+      try {
+        const resolved = path.resolve(file_path.replace(/^~/, os.homedir()));
+
+        if (!fs.existsSync(resolved)) {
+          return { success: false, error: `Path not found: ${resolved}` };
+        }
+
+        const stat = fs.statSync(resolved);
+        if (stat.isDirectory()) {
+          // rmSync with recursive:true is the modern cross-platform approach (Node 14.14+)
+          fs.rmSync(resolved, { recursive, force: false });
+        } else {
+          fs.unlinkSync(resolved);
+        }
+
+        status("Deleted");
+        return { success: true, deletedPath: resolved };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
+  const moveFileTool = tool({
+    name: "move_file",
+    description:
+      "Move a file or directory from one location to another. " +
+      "Works across the same filesystem volume. If you need to move across volumes, " +
+      "use run_command as a fallback. " +
+      "Fails if the destination already exists to prevent accidental overwrites.",
+    parameters: {
+      source_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path of the file or directory to move. Supports ~."),
+      destination_path: z
+        .string()
+        .min(1)
+        .describe(
+          "Absolute path of the destination. " +
+          "If the destination is an existing directory, the source is moved inside it. " +
+          "Otherwise the source is moved to this exact path (effectively a move + rename).",
+        ),
+    },
+    implementation: async ({ source_path, destination_path }, { status }) => {
+      status(`Moving ${path.basename(source_path)}..`);
+      try {
+        const src = path.resolve(source_path.replace(/^~/, os.homedir()));
+        let dst = path.resolve(destination_path.replace(/^~/, os.homedir()));
+
+        if (!fs.existsSync(src)) {
+          return { success: false, error: `Source not found: ${src}` };
+        }
+
+        // if destination is an existing directory, move source into it
+        if (fs.existsSync(dst) && fs.statSync(dst).isDirectory()) {
+          dst = path.join(dst, path.basename(src));
+        }
+
+        if (fs.existsSync(dst)) {
+          return {
+            success: false,
+            error: `Destination already exists: ${dst}. Delete or rename it first.`,
+          };
+        }
+
+        // ensure the destination parent directory exists
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        fs.renameSync(src, dst);
+
+        status("Moved");
+        return { success: true, sourcePath: src, destinationPath: dst };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
+  const renameFileTool = tool({
+    name: "rename_file",
+    description:
+      "Rename a file or directory in place (same parent directory). " +
+      "For moving to a different location use move_file instead. " +
+      "Fails if a file with the new name already exists.",
+    parameters: {
+      file_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path of the file or directory to rename. Supports ~."),
+      new_name: z
+        .string()
+        .min(1)
+        .describe("New name only (not a full path) - e.g. 'index.ts' not '/home/user/project/index.ts'."),
+    },
+    implementation: async ({ file_path, new_name }, { status }) => {
+      status(`Renaming ${path.basename(file_path)} → ${new_name}..`);
+      try {
+        const resolved = path.resolve(file_path.replace(/^~/, os.homedir()));
+
+        if (!fs.existsSync(resolved)) {
+          return { success: false, error: `Path not found: ${resolved}` };
+        }
+
+        // reject full paths in new_name to keep the operation clearly in-place.
+        if (path.basename(new_name) !== new_name) {
+          return {
+            success: false,
+            error: "new_name must be a plain name without directory separators. Use `move_file` to relocate.",
+          };
+        }
+
+        const destination = path.join(path.dirname(resolved), new_name);
+
+        if (fs.existsSync(destination)) {
+          return {
+            success: false,
+            error: `A file named "${new_name}" already exists in that directory.`,
+          };
+        }
+
+        fs.renameSync(resolved, destination);
+        status("Renamed");
+        return { success: true, oldPath: resolved, newPath: destination };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
+  const appendToFileTool = tool({
+    name: "append_to_file",
+    description:
+      "Append text to the end of an existing file without reading or rewriting the whole thing. " +
+      "Ideal for adding lines to logs, .env files, config lists, or any growing file. " +
+      "Creates the file (and any missing parent directories) if it does not exist yet.",
+    parameters: {
+      file_path: z
+        .string()
+        .min(1)
+        .describe("Absolute path to the file to append to. Supports ~."),
+      content: z
+        .string()
+        .describe("Text to append. Include a leading newline if you want a blank line before the new content."),
+    },
+    implementation: async ({ file_path, content }, { status }) => {
+      status(`Appending to ${path.basename(file_path)}..`);
+      try {
+        const resolved = path.resolve(file_path.replace(/^~/, os.homedir()));
+        // ensure parent directories exist so the tool works even on a new file
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        fs.appendFileSync(resolved, content, "utf-8");
+        status(`Appended ${Buffer.byteLength(content, "utf8")} bytes`);
+        return {
+          success: true,
+          filePath: resolved,
+          bytesAppended: Buffer.byteLength(content, "utf8"),
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  });
+
   return [
     listSkillsTool,
     readSkillFileTool,
@@ -503,6 +841,13 @@ export async function toolsProvider(ctl: PluginController) {
     readFileTool,
     writeFileTool,
     patchFileTool,
+    appendToFileTool,
+    createDirectoryTool,
+    listDirectoryTool,
+    deleteFileTool,
+    moveFileTool,
+    renameFileTool,
+    getCurrentDirectoryTool,
     runCommandTool,
   ];
 }
