@@ -250,12 +250,11 @@ export async function promptPreprocessor(
   ctl: PluginController,
   userMessage: MessageInput,
 ): Promise<MessageInput> {
-  const cfg = resolveEffectiveConfig(ctl);
-
-  const text = extractText(userMessage);
-  if (text.trim().length < MIN_PROMPT_LENGTH) return userMessage;
-
   try {
+    const text = extractText(userMessage);
+    if (text.trim().length < MIN_PROMPT_LENGTH) return userMessage;
+
+    const cfg = resolveEffectiveConfig(ctl);
     const skills = scanSkills(cfg.skillsPaths);
     const explicit = applyExplicitActivation(userMessage, text, cfg.skillsPaths);
     if (explicit !== null) return explicit;
