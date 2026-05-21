@@ -3,6 +3,7 @@ import {
   DEFAULT_MAX_SKILLS_IN_CONTEXT,
   MIN_MAX_SKILLS_IN_CONTEXT,
   MAX_MAX_SKILLS_IN_CONTEXT,
+  DEFAULT_SKILLS_DIR,
 } from "./constants";
 
 export const configSchematics = createConfigSchematics()
@@ -49,9 +50,9 @@ export const configSchematics = createConfigSchematics()
     {
       displayName: "Skills Paths",
       subtitle:
-        'Semicolon-separated list of skill directories, loaded in order. Leave empty to use last saved paths. Enter "default" to reset to ~/.lmstudio/skills',
+        'Semicolon-separated list of skill directories, loaded in order. Leave empty to use last saved paths. Enter "default" to reset to ~/.lmstudio/plugin-data/skills',
     },
-    "",
+    DEFAULT_SKILLS_DIR,
   )
   .field(
     "shellPath",
