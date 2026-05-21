@@ -21,7 +21,14 @@ Before every message, the plugin scans the skills directory and injects an `<ava
 | `read_file` | Read the contents of any file in the workspace outside of the skills directory |
 | `write_file` | Create or overwrite a file with exact contents, avoiding shell escaping issues |
 | `patch_file` | Find and replace a specific string inside an existing file for surgical code edits |
-| `run_command` | Execute shell commands, run Python scripts, and interact with the system |
+| `delete_file` | Delete files or directories: requires explicit `recursive=true` to delete non-empty directories (prevents accidental folder deletion), with guards to handle non-existent paths gracefully. |
+| `move_file` | Move files/directories: matches shell `mv` behavior (moves source into existing destination directories), and automatically creates missing parent directories for new nested paths. |
+| `rename_file` | Rename files/directories within their current directory only: validates no path separators in the new name, and fails instead of overwriting existing files to prevent accidental data loss. |
+| `append_to_file` | Atomically append content to files (OS-level atomicity safe for logs), and creates missing parent directories (can also create new files with initial content). |
+| `create_directory` | Idempotent `mkdir -p` wrapper that creates nested directories without errors if they already exist. |
+| `list_directory` | List directory contents: walks one level deep by default (`recursive=false`, lean output), or caps at 10 levels when `recursive=true` to avoid overwhelming output. Reuses shared tree formatting to match `list_skill_files` output. |
+| `get_current_directory` | Returns home directory, current working directory, and platform info to eliminate path guessing across operating systems. |
+| `run_command` | Execute shell commands, run scripts, and interact directly with the local system |
 
 **3. Persistent Settings**
 LM Studio does not save plugin settings across new chats. This plugin solves that by writing settings to `~/.lmstudio/plugin-data/lms-skills/settings.json` - the skills path and all configuration survive chat resets.
@@ -121,7 +128,7 @@ The default path `~/.lmstudio/skills` resolves to:
 4. Model calls `read_skill_file("skill-name")` -> receives full `SKILL.md` content
 5. `SKILL.md` may reference other files -> model calls `list_skill_files` then `read_skill_file` with specific path
 6. Model follows the skill's instructions to produce high-quality output
-7. Model uses read_file, patch_file, and write_file to execute the actual coding and file management tasks required by the user
+7. Model uses `read_file`, `patch_file`, and `write_file` to execute the actual coding and file management tasks required by the user
 
 ## License
 
