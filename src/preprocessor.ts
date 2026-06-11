@@ -14,6 +14,8 @@ type MessageContent =
   | { type: string;[key: string]: unknown };
 type MessageInput = string | { content: string | MessageContent[] } | unknown;
 
+const stateMap = new Map<unknown, { fingerprint: string; injectedAt: number }>();
+
 function extractText(message: MessageInput): string {
   if (typeof message === "string") return message;
   if (message !== null && typeof message === "object") {
@@ -113,9 +115,6 @@ function computeFingerprint(skills: SkillInfo[]): string {
     .sort()
     .join("|");
 }
-
-let lastFingerprint = "";
-let lastInjectedAt = 0;
 
 /**
  * Parse all /skill-name tokens from the message text.
@@ -261,22 +260,23 @@ export async function promptPreprocessor(
 
     if (!cfg.autoInject) return userMessage;
     if (skills.length === 0) return userMessage;
-
+    
     const fingerprint = computeFingerprint(skills);
     const now = Date.now();
-    const skillsChanged = fingerprint !== lastFingerprint;
-    const intervalElapsed = now - lastInjectedAt > REINJECT_INTERVAL_MS;
+    const state = stateMap.get(ctl) ?? { fingerprint: "", injectedAt: 0 };
+    const skillsChanged = fingerprint !== state.fingerprint;
+    const intervalElapsed = now - state.injectedAt > REINJECT_INTERVAL_MS;
 
     if (!skillsChanged && !intervalElapsed) return userMessage;
 
-    lastFingerprint = fingerprint;
-    lastInjectedAt = now;
+    stateMap.set(ctl, { fingerprint, injectedAt: now });
 
     return injectIntoMessage(
       userMessage,
       buildAutoInjectBlock(skills, cfg.maxSkillsInContext),
     );
-  } catch {
+  } catch (err) {
+    console.warn("skills preprocessor error:", err);
     return userMessage;
   }
 }
