@@ -144,6 +144,14 @@ function loadManifest(skillDir: string): SkillManifestFile | null {
   }
 }
 
+function entryIsDirectory(parentDir: string, entry: fs.Dirent): boolean {
+  try {
+    return fs.statSync(path.join(parentDir, entry.name)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function hasExtraFiles(skillDir: string): boolean {
   try {
     return fs
@@ -161,7 +169,7 @@ function scanSkillsDir(skillsDir: string): SkillInfo[] {
     const skills: SkillInfo[] = [];
 
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
+      if (!entryIsDirectory(skillsDir, entry)) continue;
 
       const skillDir = path.join(skillsDir, entry.name);
       const skillMdPath = path.join(skillDir, SKILL_ENTRY_POINT);
@@ -508,7 +516,7 @@ function walkDirectory(
     const fullPath = path.join(dir, entry.name);
     const relativePath = path.relative(rootDir, fullPath);
 
-    if (entry.isDirectory()) {
+    if (entryIsDirectory(dir, entry)) {
       entries.push({ name: entry.name, relativePath, type: "directory" });
       if (depth < MAX_DIRECTORY_DEPTH) {
         entries.push(...walkDirectory(fullPath, rootDir, depth + 1));
