@@ -48,7 +48,9 @@ export function resolveShell(
     const p = override.trim();
     const lower = p.toLowerCase();
     const isPowerShell =
-      lower.endsWith("powershell.exe") || lower.endsWith("pwsh.exe");
+      lower.endsWith("powershell.exe") ||
+      lower.endsWith("pwsh.exe") ||
+      lower.endsWith("pwsh");
     return {
       path: p,
       args: isPowerShell ? ["-NoProfile", "-NonInteractive", "-Command"] : ["-c"],
@@ -77,9 +79,20 @@ export function resolveShell(
     return { path: "cmd.exe", args: ["/c"], platform };
   }
 
-  for (const sh of ["/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh"]) {
-    if (fs.existsSync(sh)) return { path: sh, args: ["-c"], platform };
+  if (process.env.SHELL) {
+    try {
+      if (fs.existsSync(process.env.SHELL)) {
+        return { path: process.env.SHELL, args: ["-c"], platform };
+      }
+    } catch { }
   }
+
+  for (const sh of ["/bin/bash", "/usr/bin/bash", "/bin/sh", "/usr/bin/sh", "/usr/local/bin/bash", "/usr/local/bin/zsh", "/bin/zsh"]) {
+    try {
+      if (fs.existsSync(sh)) return { path: sh, args: ["-c"], platform };
+    } catch { }
+  }
+
   return { path: "/bin/sh", args: ["-c"], platform };
 }
 
