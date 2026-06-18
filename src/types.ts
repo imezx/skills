@@ -19,6 +19,7 @@ export interface PersistedSettings {
   autoInject: boolean;
   maxSkillsInContext: number;
   shellPath: string;
+  windowsShell?: "powershell" | "cmd";
 }
 
 export interface EffectiveConfig {
@@ -26,6 +27,7 @@ export interface EffectiveConfig {
   autoInject: boolean;
   maxSkillsInContext: number;
   shellPath: string;
+  windowsShell?: "powershell" | "cmd";
 }
 
 export interface DirectoryEntry {

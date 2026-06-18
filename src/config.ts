@@ -64,4 +64,17 @@ export const configSchematics = createConfigSchematics()
     },
     "",
   )
+  .field(
+    "windowsShell",
+    "select",
+    {
+      displayName: "Windows Shell",
+      subtitle: "Which shell run_command uses on Windows. Select PowerShell to prefer pwsh -> powershell.exe.",
+      options: [
+        { value: "cmd", displayName: "Command Prompt (cmd.exe)" },
+        { value: "powershell", displayName: "PowerShell (powershell.exe)" },
+      ],
+    },
+    "cmd",
+  )
   .build();

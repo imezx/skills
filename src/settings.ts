@@ -17,6 +17,7 @@ const DEFAULTS: PersistedSettings = {
   autoInject: true,
   maxSkillsInContext: DEFAULT_MAX_SKILLS_IN_CONTEXT,
   shellPath: "",
+  windowsShell: "cmd",
 };
 
 let cachedConfig: EffectiveConfig | null = null;
@@ -55,6 +56,9 @@ function loadSettings(): PersistedSettings {
           ? parsed.maxSkillsInContext
           : DEFAULTS.maxSkillsInContext,
       shellPath: typeof parsed.shellPath === "string" ? parsed.shellPath : "",
+      windowsShell: (parsed.windowsShell === "powershell" || parsed.windowsShell === "cmd") 
+        ? parsed.windowsShell 
+        : DEFAULTS.windowsShell,
     };
   } catch {
     return { ...DEFAULTS };
@@ -80,6 +84,7 @@ export function resolveEffectiveConfig(ctl: PluginController): EffectiveConfig {
     (c.get("maxSkillsInContext") as number) ?? DEFAULTS.maxSkillsInContext;
   const rawPaths = ((c.get("skillsPath") as string | undefined) ?? "").trim();
   const shellPath = ((c.get("shellPath") as string | undefined) ?? "").trim();
+  const windowsShell = ((c.get("windowsShell") as "powershell" | "cmd" | undefined) ?? "cmd");
 
   const saved = loadSettings();
 
@@ -89,6 +94,7 @@ export function resolveEffectiveConfig(ctl: PluginController): EffectiveConfig {
       maxSkillsInContext,
       skillsPaths: DEFAULTS.skillsPaths,
       shellPath,
+      windowsShell,
     };
     saveSettings(next);
     cachedConfig = next;
@@ -109,9 +115,10 @@ export function resolveEffectiveConfig(ctl: PluginController): EffectiveConfig {
     autoInject !== saved.autoInject ||
     maxSkillsInContext !== saved.maxSkillsInContext ||
     skillsPaths.join(";") !== saved.skillsPaths.join(";") ||
-    shellPath !== saved.shellPath
+    shellPath !== saved.shellPath ||
+    windowsShell !== saved.windowsShell
   ) {
-    saveSettings({ skillsPaths, autoInject, maxSkillsInContext, shellPath });
+    saveSettings({ skillsPaths, autoInject, maxSkillsInContext, shellPath, windowsShell });
   }
 
   const result: EffectiveConfig = {
@@ -119,6 +126,7 @@ export function resolveEffectiveConfig(ctl: PluginController): EffectiveConfig {
     autoInject,
     maxSkillsInContext,
     shellPath,
+    windowsShell,
   };
   cachedConfig = result;
   cacheTime = now;

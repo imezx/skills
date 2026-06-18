@@ -458,23 +458,21 @@ export async function toolsProvider(ctl: PluginController) {
     },
     implementation: async ({ command, cwd, timeout_ms, env }, { status }) => {
       const cfg = resolveEffectiveConfig(ctl);
-      const shell = resolveShell(cfg.shellPath || undefined);
+      const timeoutMs = timeout_ms ?? EXEC_DEFAULT_TIMEOUT_MS;
+
       status(
-        `Running on ${shell.platform}: ${command.slice(0, 60)}${command.length > 60 ? "\u2026" : ""}`,
+        `${command.slice(0, 72)}${command.length > 72 ? "…" : ""}`,
       );
 
       const result = await execCommand(command, {
         cwd,
-        timeoutMs: timeout_ms,
+        timeoutMs,
         shellPath: cfg.shellPath || undefined,
+        windowsShell: cfg.windowsShell,
         env,
       });
 
-      if (result.timedOut) {
-        status("Timed out");
-      } else {
-        status(`Exit ${result.exitCode}`);
-      }
+      status(result.timedOut ? "Timed out" : `Exit ${result.exitCode}`);
 
       return {
         stdout: result.stdout,
@@ -485,12 +483,17 @@ export async function toolsProvider(ctl: PluginController) {
         shell: result.shell,
         ...(result.timedOut
           ? {
-            hint: "Command exceeded the timeout. Try increasing timeout_ms or splitting into smaller steps.",
+            hint: `Command exceeded the ${timeoutMs}ms timeout. Try increasing timeout_ms or splitting the work into smaller steps.`,
           }
           : {}),
         ...(result.exitCode !== 0 && !result.timedOut && result.stderr
           ? {
-            hint: "Command exited with a non-zero code. Check stderr for details.",
+            hint:
+              result.platform === "windows" &&
+                /\b(?:python|py)\b/i.test(result.stderr) &&
+                /not recognized|CommandNotFoundException/i.test(result.stderr)
+                ? "Python was not found on PATH. Pass the full path to python.exe in the command (for example C:\\Users\\<you>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe), or restart LM Studio after installing Python."
+                : "Command exited with a non-zero code. Check stderr for details.",
           }
           : {}),
       };
